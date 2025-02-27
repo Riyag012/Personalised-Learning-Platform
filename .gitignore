@@ -20,7 +20,7 @@ package-lock.json
 !main.py
 !models.py
 !summarization.py
-!quix_generation.py
+!quiz_generation.py
 !rag.py
 
 # Ignore virtual environment
