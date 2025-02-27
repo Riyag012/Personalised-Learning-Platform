@@ -22,6 +22,7 @@ package-lock.json
 !summarization.py
 !quiz_generation.py
 !rag.py
+!ask_question.py
 
 # Ignore virtual environment
 venv/
