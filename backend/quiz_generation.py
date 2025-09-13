@@ -2,6 +2,11 @@ import google.generativeai as genai
 from dotenv import load_dotenv
 import os
 import json
+import logging
+
+# Add logger setup
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 # Load environment variables
 load_dotenv()
@@ -10,99 +15,133 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables.")
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-pro-exp-02-05')
 
-def generate_quiz_question(context, previous_questions=None):
-    """Generate a single question based on content, avoiding duplicate questions"""
+genai.configure(api_key=GEMINI_API_KEY)
+model = genai.GenerativeModel('gemini-2.5-pro')
+
+def generate_full_quiz(context, num_questions=5):
+    """Generate a full quiz with a specified number of questions in a single call."""
     
-    previous_questions_text = ""
-    if previous_questions and len(previous_questions) > 0:
-        previous_questions_text = "Previous questions (do not repeat these):\n" + "\n".join([q["question"] for q in previous_questions])
-    
-    prompt = f"""Generate 1 multiple-choice question based on the following content: 
-    
+    if not context:
+        raise ValueError("Context cannot be empty for quiz generation.")
+
+    prompt = f"""Generate a multiple-choice quiz with exactly {num_questions} questions based on the following content.
+
+Content:
 {context}
 
-{previous_questions_text}
-
-Format the response as a JSON object with the following keys:
+Format the response as a single, valid JSON array where each object has the following keys:
 - "question": The question text.
-- "options": A list of 4 options (A, B, C, D).
-- "correct_answer": The correct option.
+- "options": A list of 4 unique string options.
+- "correct_answer": The correct option string, which must be one of the strings from the "options" list.
 
-Example:
-{{
-    "question": "What is deep learning?",
-    "options": [
-        "A) A type of machine learning",
-        "B) A programming language",
-        "C) A database",
-        "D) A type of hardware"
-    ],
-    "correct_answer": "A) A type of machine learning"
-}}
+Example of the expected JSON array format:
+[
+  {{
+    "question": "What is the primary function of a CPU?",
+    "options": ["Store data long-term", "Execute instructions", "Display graphics", "Connect to the internet"],
+    "correct_answer": "Execute instructions"
+  }},
+  {{
+    "question": "Which of these is a type of RAM?",
+    "options": ["DDR4", "SSD", "HDD", "USB"],
+    "correct_answer": "DDR4"
+  }}
+]
 
-Now generate 1 new question based on this content. Return only valid JSON.
+Now, generate the quiz. Return only the valid JSON array and nothing else.
 """
     
     try:
-        print("Sending prompt to Gemini API for single question")
+        logger.info(f"Generating a quiz with {num_questions} questions.")
         response = model.generate_content(prompt)
-        print("Raw Gemini API response:", response.text)
         
-        # Try to extract JSON from the response text
-        text = response.text
+        cleaned_text = response.text.strip().replace("```json", "").replace("```", "")
+        quiz_data = json.loads(cleaned_text)
+
+        if not isinstance(quiz_data, list) or len(quiz_data) != num_questions:
+            raise ValueError("Generated quiz does not match the requested number of questions.")
         
-        # Handle case where the response might contain text before or after the JSON
-        try:
-            # Try to find JSON object
-            start_idx = text.find('{')
-            end_idx = text.rfind('}') + 1
-            if start_idx >= 0 and end_idx > start_idx:
-                json_str = text[start_idx:end_idx]
-                question = json.loads(json_str)
-            else:
-                # Alternative extraction method
-                question = json.loads(text)
-        except json.JSONDecodeError:
-            # Try using a more relaxed parsing approach
-            import re
-            json_pattern = r'\{[\s\S]*\}'
-            match = re.search(json_pattern, text)
-            if match:
-                json_str = match.group(0)
-                question = json.loads(json_str)
-            else:
-                raise ValueError("Could not extract valid JSON from the response")
-        
-        # Validate that the question has all required fields
-        if not all(key in question for key in ["question", "options", "correct_answer"]):
-            raise ValueError("Response is missing required fields")
-        
-        # Validate that the correct_answer is in the options
-        if question["correct_answer"] not in question["options"]:
-            raise ValueError("Correct answer is not in the options list")
-            
-        return question
+        for q in quiz_data:
+            if not all(key in q for key in ["question", "options", "correct_answer"]):
+                raise ValueError("Quiz question is missing required keys.")
+            if q["correct_answer"] not in q["options"]:
+                raise ValueError("Correct answer is not listed in the options for a question.")
+
+        return {"success": True, "quiz": quiz_data}
     except Exception as e:
-        print(f"Quiz Question Generation Error: {str(e)}")
-        # Return a fallback question in case of error
-        return {
-            "question": "What is the primary purpose of a quiz in an educational context?",
-            "options": [
-                "A) To assess knowledge retention",
-                "B) To entertain students",
-                "C) To take up class time",
-                "D) To replace textbooks"
-            ],
-            "correct_answer": "A) To assess knowledge retention"
-        }
+        logger.error(f"Error generating full quiz: {str(e)}")
+        return {"success": False, "error": f"Failed to generate a valid quiz. Error: {str(e)}"}
+
+
+def analyze_quiz_results(context, quiz_questions, user_answers):
+    """Analyzes quiz results to identify strong and weak areas."""
     
-def generate_answer(query):
-    """
-    Simulates generating an answer to a user's query.
-    Replace this with actual logic (e.g., using a QA model).
-    """
-    # Example logic (replace with your actual implementation)
-    return f"This is a sample answer for the query: {query}"
+    if not quiz_questions or not user_answers:
+        return {"success": False, "error": "Invalid quiz data provided for analysis."}
+
+    correct_questions = []
+    incorrect_questions = []
+
+    for i, q in enumerate(quiz_questions):
+        user_answer = user_answers.get(str(i))
+        if user_answer == q["correct_answer"]:
+            correct_questions.append(q["question"])
+        else:
+            incorrect_questions.append({
+                "question": q["question"],
+                "user_answer": user_answer or "Not answered",
+                "correct_answer": q["correct_answer"]
+            })
+    
+    if not incorrect_questions:
+        return {
+            "success": True, 
+            "analysis": {
+                "strong_areas": ["All topics covered!"],
+                "weak_areas": [],
+                "feedback": "Excellent work! You answered all questions correctly. You have a strong understanding of the material."
+            }
+        }
+
+    # --- SOLUTION: Format the string before the f-string ---
+    correctly_answered_formatted = "- " + "\n- ".join(correct_questions)
+    # --- END OF SOLUTION ---
+
+    prompt = f"""You are an expert tutor providing feedback on a quiz. The quiz was based on the original context provided below.
+
+Original Context:
+---
+{context}
+---
+
+The student's performance is as follows:
+
+Correctly Answered Questions (Their Strong Topics):
+{correctly_answered_formatted}
+
+Incorrectly Answered Questions (Their Weak Topics):
+{json.dumps(incorrect_questions, indent=2)}
+
+---
+Based on this performance, analyze the student's weak areas. Provide encouraging and actionable feedback. Your response must be a single, valid JSON object with the following keys:
+- "strong_areas": A list of 1-2 topics the student understands well.
+- "weak_areas": A list of 1-2 specific topics the student needs to review, based on the incorrect answers.
+- "feedback": A concise paragraph (2-3 sentences) suggesting what to study next.
+
+Return only the valid JSON object.
+"""
+
+    try:
+        logger.info("Generating quiz analysis.")
+        response = model.generate_content(prompt)
+        cleaned_text = response.text.strip().replace("```json", "").replace("```", "")
+        analysis_data = json.loads(cleaned_text)
+
+        if not all(key in analysis_data for key in ["strong_areas", "weak_areas", "feedback"]):
+            raise ValueError("Analysis is missing required fields.")
+
+        return {"success": True, "analysis": analysis_data}
+    except Exception as e:
+        logger.error(f"Error generating quiz analysis: {str(e)}")
+        return {"success": False, "error": f"Failed to generate quiz analysis. Error: {str(e)}"}

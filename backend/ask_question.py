@@ -3,9 +3,11 @@ from dotenv import load_dotenv
 import os
 import logging
 
-# Configure logging
+# --- SOLUTION: Add logger setup to this file ---
+# This creates a logger specific to this module.
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
+# --- END OF SOLUTION ---
 
 # Load environment variables
 load_dotenv()
@@ -16,33 +18,40 @@ if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables.")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-pro-exp-02-05')
+# Using a model that is good for RAG and general queries
+model = genai.GenerativeModel('gemini-1.5-flash') 
 
-def generate_answer(query, user_level="beginner"):
+def generate_answer(query, user_level="beginner", context=None):
     """
-    Generates an answer to a user's question based on their learning level.
-    
-    Args:
-        query (str): The question from the user
-        user_level (str): The user's learning level (beginner, intermediate, advanced)
-        
-    Returns:
-        str: The generated answer or error message
+    Generates an answer to a user's question, using provided context if available.
     """
     if not query:
         logger.warning("Empty query provided to generate_answer")
         return "No question provided"
 
-    prompt = f"""Answer this question for a {user_level} learner:
-    {query}
-    
-    Requirements:
-    - Use simple language and basic concepts for beginners
-    - Include more technical details for intermediate users
-    - Provide comprehensive explanations with advanced terminology for advanced users
-    - Structure the answer with clear sections if needed
-    - Include examples where appropriate
-    - Keep the answer concise but thorough"""
+    if context:
+        # RAG-specific prompt
+        prompt = f"""You are a helpful assistant. Answer the following question based ONLY on the provided context.
+        If the answer is not found in the context, say "I could not find the answer in the provided document."
+
+        Context:
+        {context}
+        
+        Question:
+        {query}
+        """
+    else:
+        # Original general-knowledge prompt
+        prompt = f"""Answer this question for a {user_level} learner:
+        {query}
+        
+        Requirements:
+        - Use simple language and basic concepts for beginners
+        - Include more technical details for intermediate users
+        - Provide comprehensive explanations with advanced terminology for advanced users
+        - Structure the answer with clear sections if needed
+        - Include examples where appropriate
+        - Keep the answer concise but thorough"""
     
     try:
         logger.debug(f"Sending query to model: {query[:100]}...")
@@ -53,19 +62,15 @@ def generate_answer(query, user_level="beginner"):
         logger.error(f"Error generating answer: {str(e)}")
         return f"Error generating answer: {str(e)}"
 
-def process_question(query, user_level="beginner"):
+def process_question(query, user_level="beginner", context=None):
     """
-    Process a question with error handling and logging.
-    
-    Returns dict with:
-    - success: boolean
-    - answer: string (or error message if success=False)
+    Process a question with error handling and logging, passing context if it exists.
     """
     try:
         if not query:
             return {"success": False, "answer": "No question provided"}
             
-        answer = generate_answer(query, user_level)
+        answer = generate_answer(query, user_level, context=context)
         return {"success": True, "answer": answer}
     except Exception as e:
         logger.error(f"Error in process_question: {str(e)}")

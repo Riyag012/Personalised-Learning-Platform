@@ -11,7 +11,7 @@ if not GEMINI_API_KEY:
     raise ValueError("GEMINI_API_KEY not found in environment variables.")
 
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-2.0-pro-exp-02-05')
+model = genai.GenerativeModel('gemini-2.5-pro')
 
 def summarize_content(context, user_level):
     """
